@@ -90,6 +90,26 @@ services:
       - data-quality-network
     restart: unless-stopped
 
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+    container_name: dashboard
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: data_quality
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin123
+    ports:
+      - "8502:8501"
+    networks:
+      - data-quality-network
+    restart: unless-stopped
+
 volumes:
   postgres_data:
 
