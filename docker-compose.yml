@@ -79,6 +79,8 @@ services:
         condition: service_started
       postgres:
         condition: service_healthy
+    volumes:
+      - ./flink/logs:/app/logs
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       POSTGRES_HOST: postgres
