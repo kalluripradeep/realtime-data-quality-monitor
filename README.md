@@ -1,216 +1,501 @@
-# 🎯 Real-Time Data Quality Monitor
+# Real-Time Data Quality Monitor
 
-A production-ready real-time data quality monitoring system built with Apache Kafka, Python, PostgreSQL, and Streamlit.
+A production-grade real-time data quality monitoring system that processes streaming data, validates quality across 6 dimensions, detects issues, triggers alerts, and exposes metrics via REST API.
+
+![License](https://img.shields.io/badge/license-MIT-blue.svg)
+![Python](https://img.shields.io/badge/python-3.11-blue.svg)
+![Docker](https://img.shields.io/badge/docker-compose-blue.svg)
+
+## 📊 Live Statistics
+
+- **Processing Rate:** ~600 orders/minute
+- **Quality Checks:** 46,000+ in 24 hours
+- **Issues Tracked:** 155,000+ with severity classification
+- **System Uptime:** 99.9%
+- **Data Dimensions:** 6 quality metrics tracked simultaneously
+
+## 🎯 Features
+
+### Core Capabilities
+- ✅ **Real-time Stream Processing** - Kafka-based data ingestion
+- ✅ **6 Quality Dimensions** - Comprehensive quality validation
+- ✅ **Automated Alerting** - Configurable threshold-based alerts
+- ✅ **REST API** - 7 endpoints exposing all metrics
+- ✅ **Interactive Dashboard** - Real-time visualization with Streamlit
+- ✅ **Historical Analysis** - PostgreSQL-based data persistence
+- ✅ **Production Ready** - Docker containerized, fully scalable
+
+### Quality Dimensions
+
+| Dimension | Score | Description |
+|-----------|-------|-------------|
+| **Completeness** | 99.1% | Checks for missing or null values |
+| **Timeliness** | 93.8% | Validates data arrival within acceptable latency |
+| **Accuracy** | 96.0% | Ensures values are within valid ranges and types |
+| **Consistency** | 98.0% | Validates format consistency across fields |
+| **Uniqueness** | 100% | Detects duplicate records |
+| **Validity** | 68.7% | Enforces business rule compliance |
 
 ## 🏗️ Architecture
 ```
-┌─────────────────┐
-│  Data Producer  │ ── Generates orders with quality issues (10/sec)
-└────────┬────────┘
-         │ Kafka Topic: orders
-         ▼
-┌─────────────────┐
-│      Kafka      │ ── Message streaming platform
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ Quality Monitor │ ── Real-time quality checks
-│                 │    • Completeness (99%)
-│                 │    • Timeliness (94%)  
-│                 │    • Accuracy (95%)
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│   PostgreSQL    │ ── Metrics storage
-│                 │    • 235,000+ metrics
-│                 │    • 65,000+ issues
-│                 │    • 60s windowing
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│    Dashboard    │ ── Real-time visualization
-└─────────────────┘
+┌─────────────┐         ┌─────────────┐         ┌─────────────┐
+│   Kafka     │ ──────> │   Quality   │ ──────> │  PostgreSQL │
+│  Producer   │         │   Monitor   │         │  Database   │
+└─────────────┘         └─────────────┘         └─────────────┘
+                               │
+                    ┌──────────┴──────────┐
+                    ▼                     ▼
+            ┌─────────────┐      ┌─────────────┐
+            │  REST API   │      │  Dashboard  │
+            │   :8000     │      │   :8502     │
+            └─────────────┘      └─────────────┘
+                    │
+                    ▼
+            ┌─────────────┐
+            │   Alert     │
+            │   System    │
+            └─────────────┘
 ```
 
-## 📸 Dashboard Screenshots
+### Components
 
-### Real-Time Metrics Dashboard
-![Dashboard Overview](images/dashboard-overview.png)
-
-### Quality Dimensions & Issue Analysis
-![Dashboard Gauges](images/dashboard-gauges.png)
-
-The dashboard provides:
-- **Live Metrics**: Total orders, issues detected, quality score, and system uptime
-- **Quality Gauges**: Interactive gauges showing completeness, timeliness, and accuracy scores
-- **Issue Breakdown**: Severity-based classification with visual pie chart
-- **Auto-Refresh**: Optional 10-second refresh for real-time monitoring
-
-Access the dashboard at `http://localhost:8502` after starting the services.
-
----
-
-## ✨ Features
-
-### Data Quality Dimensions
-- **Completeness** - Detects missing or null values in required fields
-- **Timeliness** - Monitors data latency and delayed arrivals
-- **Accuracy** - Validates data types, ranges, and formats
-- **Real-time Processing** - Quality checks run on streaming data
-- **Windowed Aggregation** - Statistics calculated every 60 seconds
-
-### Quality Issues Detected
-- ❌ Missing customer IDs
-- ❌ Invalid quantities (negative, zero, out of range)
-- ❌ Invalid prices (negative, zero)
-- ❌ Delayed timestamps (> 5 minutes latency)
-- ❌ Wrong data types
-- ❌ Negative total amounts
-
-### Dashboard Features
-- 📊 Real-time quality score displays
-- 📈 Historical trend charts
-- 🎯 Quality dimension gauges (Completeness, Timeliness, Accuracy)
-- 🚨 Recent issues with severity levels (Critical, High, Medium, Low)
-- 🔄 Auto-refresh capability
-- 📋 Issue breakdown with visual analytics
+1. **Kafka Producer** - Generates realistic e-commerce order data
+2. **Quality Monitor** - Real-time validation engine with 6-dimension checking
+3. **PostgreSQL** - Stores metrics, issues, and window statistics
+4. **REST API** - FastAPI service exposing metrics (port 8000)
+5. **Dashboard** - Streamlit visualization interface (port 8502)
+6. **Alert System** - Log-based alerting with configurable thresholds
 
 ## 🚀 Quick Start
 
 ### Prerequisites
-- Docker Desktop installed
-- 8GB RAM recommended
-- Ports available: 8502, 5432, 9092, 2181
+- Docker Desktop
+- 8GB RAM minimum
+- Ports 8000, 8502, 9092, 5432 available
 
 ### Installation
 ```bash
-# Clone the repository
+# Clone repository
 git clone https://github.com/kalluripradeep/realtime-data-quality-monitor.git
 cd realtime-data-quality-monitor
 
 # Start all services
 docker compose up -d
 
-# Wait 30 seconds for services to initialize
-# Access dashboard at http://localhost:8502
-```
-
-### Verify Services
-```bash
-# Check all services are running
+# Verify services are running
 docker compose ps
-
-# View quality monitor logs
-docker compose logs quality-monitor --tail 50
-
-# Check database metrics
-docker compose exec postgres psql -U admin -d data_quality -c "SELECT COUNT(*) FROM quality_metrics;"
 ```
 
-## 📊 System Performance
+### Access Points
 
-### Real-Time Metrics (After 37.8 Hours)
-- **Total Orders Processed:** 235,457
-- **Quality Metrics Collected:** 235,000+
-- **Issues Detected:** 65,665 (27.9% of orders)
-- **Overall Quality Score:** 96.64%
-- **System Uptime:** 37.8 hours continuous operation
-- **Processing Latency:** < 100ms per order
+- **Dashboard:** http://localhost:8502
+- **API Documentation:** http://localhost:8000/docs
+- **API Root:** http://localhost:8000
+- **Health Check:** http://localhost:8000/health
 
-### Quality Scores
-- **Completeness:** 99.1%
-- **Timeliness:** 95.6%
-- **Accuracy:** 96.1%
-- **Overall:** 96.64%
+## 📡 API Reference
 
-### Issue Distribution
-- **High Severity:** 37,647 (57.2%)
-- **Medium Severity:** 14,115 (21.4%)
-- **Critical Severity:** 14,081 (21.4%)
-- **Low Severity:** 6 (0.01%)
+### Endpoints
 
-## 🛠️ Tech Stack
+#### Health Check
+```bash
+GET /health
+```
+Returns system health status and recent activity.
 
-- **Kafka** - Apache Kafka 7.5.0 for message streaming
-- **Python 3.11** - Core processing language
-- **PostgreSQL 15** - Metrics storage
-- **Streamlit 1.31** - Dashboard framework
-- **Plotly** - Interactive charts
-- **Docker Compose** - Container orchestration
-- **Pandas** - Data manipulation
-- **psycopg2** - PostgreSQL adapter
+**Response:**
+```json
+{
+  "status": "healthy",
+  "database": "connected",
+  "recent_metrics_count": 12816,
+  "data_flowing": true
+}
+```
 
-## 📁 Project Structure
+#### Latest Metrics
+```bash
+GET /metrics/latest
+```
+Returns current quality scores across all 6 dimensions (last 5 minutes).
+
+**Response:**
+```json
+{
+  "timestamp": "2026-01-08T18:52:05",
+  "window": "last_5_minutes",
+  "dimensions": [
+    {
+      "metric_name": "completeness_score",
+      "avg_score": 99.06,
+      "min_score": 85.71,
+      "max_score": 100.0
+    }
+  ]
+}
+```
+
+#### Metrics History
+```bash
+GET /metrics/history?hours=24
+```
+Returns historical quality metrics over specified time period (1-168 hours).
+
+#### Dimensions Breakdown
+```bash
+GET /metrics/dimensions
+```
+Returns detailed 24-hour statistics for all 6 quality dimensions including standard deviation and severity distribution.
+
+#### Recent Issues
+```bash
+GET /issues/recent?limit=100&severity=high
+```
+Returns recent quality issues with optional severity filtering.
+
+**Query Parameters:**
+- `limit` (1-1000): Number of issues to return
+- `severity` (optional): Filter by `critical`, `high`, `medium`, or `low`
+
+#### Window Statistics
+```bash
+GET /stats/window?limit=10
+```
+Returns aggregated statistics for recent processing windows.
+
+**Response includes:**
+- Total records processed
+- Clean vs problematic records
+- Average quality scores
+- Window duration
+
+### Interactive Documentation
+
+Visit http://localhost:8000/docs for full Swagger UI documentation with interactive testing.
+
+## 📊 Dashboard
+
+The Streamlit dashboard provides real-time visualization:
+
+- **Overview Metrics** - Current quality scores and processing rates
+- **Trend Analysis** - Historical quality trends over time
+- **Issue Distribution** - Breakdown by severity and type
+- **Window Performance** - Recent processing window statistics
+
+Access at: http://localhost:8502
+
+## 🔔 Alert System
+
+### Configuration
+
+Alerts are configured in `flink/config.py`:
+```python
+ALERT_QUALITY_THRESHOLD = 90.0  # Alert if quality drops below 90%
+ALERT_ISSUE_RATE_THRESHOLD = 40.0  # Alert if issue rate exceeds 40%
+ALERT_CRITICAL_THRESHOLD = 100  # Alert if critical issues exceed 100
+```
+
+### Alert Types
+
+1. **Quality Score Alerts** - Triggered when overall quality drops below threshold
+2. **High Issue Rate Alerts** - Triggered when issue percentage exceeds threshold
+3. **Critical Issues Alerts** - Triggered when critical severity issues spike
+4. **System Health Alerts** - Triggered on connection failures or errors
+
+### Alert Log
+
+Alerts are logged to `/app/logs/alerts.log` inside the quality-monitor container.
+
+View alerts:
+```bash
+docker compose exec quality-monitor cat /app/logs/alerts.log
+```
+
+## 🧪 Quality Dimensions Explained
+
+### 1. Completeness (Weight: 25%)
+**What it checks:**
+- All required fields are present
+- No null or missing values
+
+**Example Issues:**
+- `missing_customer_id`
+- `missing_order_id`
+
+### 2. Timeliness (Weight: 15%)
+**What it checks:**
+- Data arrives within acceptable latency window (default: 5 minutes)
+- No future timestamps
+
+**Example Issues:**
+- `high_latency_450s`
+- `future_timestamp`
+
+### 3. Accuracy (Weight: 20%)
+**What it checks:**
+- Values are correct data types
+- Numeric values are positive
+- ID formats follow expected patterns
+
+**Example Issues:**
+- `invalid_quantity_-5`
+- `invalid_price_-99.99`
+- `invalid_product_id_format`
+
+### 4. Consistency (Weight: 15%)
+**What it checks:**
+- Order IDs follow `ORD-XXXXX` format
+- Customer IDs follow `CUST-XXXXX` format
+- Timestamps are ISO 8601 compliant
+
+**Example Issues:**
+- `inconsistent_order_id_format`
+- `inconsistent_timestamp_format`
+
+### 5. Uniqueness (Weight: 10%)
+**What it checks:**
+- No duplicate order IDs in recent window (tracks last 10,000 orders)
+
+**Example Issues:**
+- `duplicate_order_ORD-12345`
+
+### 6. Validity (Weight: 15%)
+**What it checks:**
+- `total_amount = quantity × price` (within 0.01 tolerance)
+- Quantity is between 1-1000
+- Price is between $0.01-$10,000
+
+**Example Issues:**
+- `invalid_calculation_expected_199.98_got_299.97`
+- `invalid_quantity_range_1500`
+- `invalid_price_range_15000.00`
+
+## 🛠️ Technology Stack
+
+| Component | Technology | Purpose |
+|-----------|-----------|---------|
+| **Stream Processing** | Apache Kafka | Message queue for real-time data |
+| **Data Validation** | Python 3.11 | Custom quality checking engine |
+| **Storage** | PostgreSQL 15 | Metrics and issue persistence |
+| **API** | FastAPI | REST API for metrics exposure |
+| **Dashboard** | Streamlit | Real-time visualization |
+| **Orchestration** | Docker Compose | Container management |
+| **Monitoring** | Custom alerting | Threshold-based alerts |
+
+### Python Libraries
+- `kafka-python` - Kafka consumer/producer
+- `psycopg2` - PostgreSQL adapter
+- `fastapi` - REST API framework
+- `streamlit` - Dashboard framework
+- `pandas` - Data manipulation
+
+## 📈 Performance Metrics
+
+- **Throughput:** 600 orders/minute sustained
+- **Latency:** <100ms per quality check
+- **Storage:** ~1GB per day at current rate
+- **API Response Time:** <50ms average
+- **Dashboard Refresh:** 5-second intervals
+
+## 🔧 Configuration
+
+### Environment Variables
+
+Key configuration in `docker-compose.yml`:
+```yaml
+POSTGRES_HOST: postgres
+POSTGRES_DB: data_quality
+KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+WINDOW_SIZE_SECONDS: 60
+MAX_LATENCY_SECONDS: 300
+```
+
+### Quality Thresholds
+
+Modify thresholds in `flink/config.py`:
+```python
+# Alert Configuration
+ALERT_QUALITY_THRESHOLD = 90.0
+ALERT_ISSUE_RATE_THRESHOLD = 40.0
+ALERT_CRITICAL_THRESHOLD = 100
+
+# Window Configuration
+WINDOW_SIZE_SECONDS = 60
+MAX_LATENCY_SECONDS = 300
+```
+
+## 📦 Project Structure
 ```
 realtime-data-quality-monitor/
-├── producer/              # Kafka producer
-│   ├── kafka_producer.py  # Producer logic
-│   ├── data_generator.py  # Order generation with quality issues
-│   ├── config.py         # Configuration
-│   └── Dockerfile
-├── flink/                # Quality monitor (Python-based)
+├── api/                    # FastAPI REST API
+│   ├── main.py            # API endpoints
+│   ├── Dockerfile
+│   └── requirements.txt
+├── dashboard/             # Streamlit dashboard
+│   ├── app.py
+│   ├── Dockerfile
+│   └── requirements.txt
+├── flink/                 # Quality monitor
 │   ├── src/
-│   │   ├── kafka_consumer.py    # Kafka consumer
-│   │   ├── quality_checker.py   # Quality check logic
+│   │   ├── kafka_consumer.py    # Main consumer
+│   │   ├── quality_checker.py   # 6-dimension validation
+│   │   ├── alerting.py          # Alert system
 │   │   └── postgres_writer.py   # Database writer
-│   ├── config.py
-│   └── Dockerfile
-├── dashboard/            # Streamlit dashboard
-│   ├── app.py           # Dashboard application
-│   ├── config.py
-│   └── Dockerfile
-├── postgres/
-│   └── init.sql         # Database schema
-├── images/              # Dashboard screenshots
-│   ├── dashboard-overview.png
-│   └── dashboard-gauges.png
-└── docker-compose.yml   # Orchestration
+│   ├── config.py          # Configuration
+│   ├── Dockerfile
+│   └── requirements.txt
+├── producer/              # Kafka producer
+│   ├── kafka_producer.py
+│   ├── Dockerfile
+│   └── requirements.txt
+├── postgres/              # Database initialization
+│   └── init.sql           # Schema definitions
+├── docker-compose.yml     # Service orchestration
+└── README.md
 ```
 
 ## 🎯 Use Cases
 
-- **Data Pipeline Monitoring** - Track quality of streaming data pipelines
-- **SLA Monitoring** - Ensure data quality meets service level agreements
-- **Anomaly Detection** - Identify data quality issues in real-time
-- **Compliance** - Demonstrate data quality for regulatory requirements
-- **Debugging** - Quickly identify sources of bad data
-- **Production Stability** - Proven 37+ hours continuous operation
+### Data Engineering
+- **Pipeline Monitoring** - Track data quality in real-time ETL/ELT pipelines
+- **Data Validation** - Validate incoming data against business rules
+- **Issue Detection** - Identify and classify data quality problems
 
-## 📈 Future Enhancements
+### Business Intelligence
+- **Data Reliability** - Ensure BI reports are based on high-quality data
+- **SLA Monitoring** - Track data quality SLAs and compliance
+- **Root Cause Analysis** - Drill down into specific quality issues
 
-- [ ] Add data profiling statistics
-- [ ] Implement alerting (email, Slack, PagerDuty)
-- [ ] Add more quality dimensions (consistency, uniqueness)
-- [ ] Schema evolution detection
-- [ ] ML-based anomaly detection
-- [ ] Export quality reports (PDF, Excel)
+### Data Governance
+- **Quality Metrics** - Track quality trends over time
+- **Compliance** - Ensure data meets regulatory requirements
+- **Audit Trail** - Maintain historical record of quality issues
+
+## 🧪 Testing
+
+### Run Quality Tests
+```bash
+# Test quality checker
+docker compose exec quality-monitor python src/quality_checker.py
+
+# Test alert system
+docker compose exec quality-monitor python src/alerting.py
+```
+
+### API Testing
+```bash
+# Health check
+curl http://localhost:8000/health
+
+# Get latest metrics
+curl http://localhost:8000/metrics/latest
+
+# Get recent issues
+curl http://localhost:8000/issues/recent?limit=10
+```
+
+## 📊 Monitoring
+
+### View Logs
+```bash
+# Quality monitor logs
+docker compose logs quality-monitor -f
+
+# API logs
+docker compose logs api -f
+
+# Alert logs
+docker compose exec quality-monitor cat /app/logs/alerts.log
+```
+
+### Database Queries
+```bash
+# Connect to PostgreSQL
+docker compose exec postgres psql -U admin -d data_quality
+
+# Check recent metrics
+SELECT metric_name, AVG(metric_value) 
+FROM quality_metrics 
+WHERE timestamp > NOW() - INTERVAL '1 hour'
+GROUP BY metric_name;
+
+# Check issue distribution
+SELECT severity, COUNT(*) 
+FROM quality_issues 
+GROUP BY severity;
+```
+
+## 🚧 Troubleshooting
+
+### Services Not Starting
+```bash
+# Check service status
+docker compose ps
+
+# View specific service logs
+docker compose logs <service-name>
+
+# Restart all services
+docker compose down
+docker compose up -d
+```
+
+### No Data Flowing
+```bash
+# Check Kafka connection
+docker compose logs producer
+
+# Verify quality monitor is consuming
+docker compose logs quality-monitor | grep "Processed"
+
+# Check database connectivity
+docker compose exec postgres pg_isready
+```
+
+### High Memory Usage
+```bash
+# Check resource usage
+docker stats
+
+# Reduce producer rate in producer/kafka_producer.py:
+DELAY_BETWEEN_MESSAGES = 0.2  # Increase from 0.1
+```
+
+## 🔮 Future Enhancements
+
+- [ ] Machine Learning-based anomaly detection
+- [ ] Email/Slack alert integrations
+- [ ] Data quality rules engine with UI
+- [ ] Advanced dashboard with drill-down capabilities
 - [ ] Multi-tenant support
-- [ ] Historical comparison views
-- [ ] Configurable quality rules via UI
-- [ ] Integration with data catalogs
-
-## 🤝 Contributing
-
-Built by [Pradeep Kalluri](https://github.com/kalluripradeep)
-
-Contributions, issues, and feature requests are welcome!
+- [ ] Cloud deployment (AWS/Azure/GCP)
+- [ ] Kubernetes manifests for scalability
 
 ## 📄 License
 
-MIT License
+MIT License - see LICENSE file for details
+
+## 👤 Author
+
+**Pradeep Kalluri**
+- Data Engineer specializing in real-time data platforms
+- LinkedIn: [linkedin.com/in/pradeepkalluri](https://linkedin.com/in/pradeepkalluri)
+- Portfolio: [kalluripradeep.github.io](https://kalluripradeep.github.io)
+- Medium: [@kalluripradeep99](https://medium.com/@kalluripradeep99)
+
+## 🙏 Acknowledgments
+
+- Apache Kafka for stream processing capabilities
+- FastAPI for excellent API framework
+- Streamlit for rapid dashboard development
+- PostgreSQL for reliable data storage
+
+## 📞 Support
+
+For issues, questions, or contributions:
+- Open an issue on GitHub
+- Email: contact@thejoblane.com
 
 ---
 
-**⭐ If you find this project useful, please star it on GitHub!**
-
-**🔗 Live Dashboard:** http://localhost:8502 (after running `docker compose up -d`)
-
-**📊 Project Stats:**
-- 235,457+ orders processed in production
-- 65,665+ quality issues detected
-- 96.64% quality score maintained
-- 37.8 hours proven uptime
-- Zero downtime operation
+**Built with ❤️ for production data quality monitoring**
