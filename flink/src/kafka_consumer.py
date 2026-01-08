@@ -52,6 +52,9 @@ class QualityMonitor:
             'completeness_scores': [],
             'timeliness_scores': [],
             'accuracy_scores': [],
+            'consistency_scores': [],
+            'uniqueness_scores': [],
+            'validity_scores': [],
             'overall_scores': []
         }
     
@@ -94,10 +97,13 @@ class QualityMonitor:
         
         window_end = datetime.utcnow()
         
-        # Calculate average scores
+        # Calculate average scores for all dimensions
         avg_completeness = sum(self.window_data['completeness_scores']) / len(self.window_data['completeness_scores']) if self.window_data['completeness_scores'] else 0
         avg_timeliness = sum(self.window_data['timeliness_scores']) / len(self.window_data['timeliness_scores']) if self.window_data['timeliness_scores'] else 0
         avg_accuracy = sum(self.window_data['accuracy_scores']) / len(self.window_data['accuracy_scores']) if self.window_data['accuracy_scores'] else 0
+        avg_consistency = sum(self.window_data['consistency_scores']) / len(self.window_data['consistency_scores']) if self.window_data['consistency_scores'] else 0
+        avg_uniqueness = sum(self.window_data['uniqueness_scores']) / len(self.window_data['uniqueness_scores']) if self.window_data['uniqueness_scores'] else 0
+        avg_validity = sum(self.window_data['validity_scores']) / len(self.window_data['validity_scores']) if self.window_data['validity_scores'] else 0
         avg_overall = sum(self.window_data['overall_scores']) / len(self.window_data['overall_scores']) if self.window_data['overall_scores'] else 0
         
         # Check for alerts based on window quality checker stats
@@ -116,12 +122,14 @@ class QualityMonitor:
             overall_score=round(avg_overall, 2)
         )
         
-        # Log window completion
+        # Log window completion with all dimensions
         self.alert_manager.log_info(
             f"Window completed: {self.window_data['total']} records processed, "
-            f"{self.window_data['clean']} clean, "
-            f"{self.window_data['issues']} with issues, "
-            f"avg quality: {avg_overall:.2f}%"
+            f"{self.window_data['clean']} clean, {self.window_data['issues']} with issues | "
+            f"Scores - Overall: {avg_overall:.1f}%, Completeness: {avg_completeness:.1f}%, "
+            f"Timeliness: {avg_timeliness:.1f}%, Accuracy: {avg_accuracy:.1f}%, "
+            f"Consistency: {avg_consistency:.1f}%, Uniqueness: {avg_uniqueness:.1f}%, "
+            f"Validity: {avg_validity:.1f}%"
         )
         
         # Reset window stats in quality checker
@@ -136,13 +144,16 @@ class QualityMonitor:
             'completeness_scores': [],
             'timeliness_scores': [],
             'accuracy_scores': [],
+            'consistency_scores': [],
+            'uniqueness_scores': [],
+            'validity_scores': [],
             'overall_scores': []
         }
     
     def process_order(self, order):
         """Process a single order and check quality."""
         try:
-            # Run quality checks (now includes alert tracking)
+            # Run quality checks (now includes all 6 dimensions)
             result = self.checker.check_all(order)
             
             # Update window data
@@ -152,13 +163,16 @@ class QualityMonitor:
             else:
                 self.window_data['issues'] += 1
             
-            # Collect scores
+            # Collect scores for all dimensions
             self.window_data['completeness_scores'].append(result['completeness']['score'])
             self.window_data['timeliness_scores'].append(result['timeliness']['score'])
             self.window_data['accuracy_scores'].append(result['accuracy']['score'])
+            self.window_data['consistency_scores'].append(result['consistency']['score'])
+            self.window_data['uniqueness_scores'].append(result['uniqueness']['score'])
+            self.window_data['validity_scores'].append(result['validity']['score'])
             self.window_data['overall_scores'].append(result['overall_score'])
             
-            # Write individual metrics
+            # Write individual metrics - ALL 6 DIMENSIONS
             self.writer.write_metric(
                 'completeness_score',
                 result['completeness']['score'],
@@ -178,6 +192,27 @@ class QualityMonitor:
                 result['accuracy']['score'],
                 'accuracy',
                 result['accuracy']
+            )
+            
+            self.writer.write_metric(
+                'consistency_score',
+                result['consistency']['score'],
+                'consistency',
+                result['consistency']
+            )
+            
+            self.writer.write_metric(
+                'uniqueness_score',
+                result['uniqueness']['score'],
+                'uniqueness',
+                result['uniqueness']
+            )
+            
+            self.writer.write_metric(
+                'validity_score',
+                result['validity']['score'],
+                'validity',
+                result['validity']
             )
             
             # Write issues if any
@@ -206,8 +241,10 @@ class QualityMonitor:
         """Determine severity level of an issue."""
         if 'missing_customer_id' in issue or 'missing_order_id' in issue:
             return 'critical'
-        elif 'invalid' in issue or 'negative' in issue:
+        elif 'duplicate' in issue or 'invalid_calculation' in issue:
             return 'high'
+        elif 'invalid' in issue or 'inconsistent' in issue:
+            return 'medium'
         elif 'high_latency' in issue:
             return 'medium'
         else:
@@ -215,14 +252,15 @@ class QualityMonitor:
     
     def run(self):
         """Main processing loop with alerting."""
-        print(f"🚀 Starting Quality Monitor with Alerting...")
+        print(f"🚀 Starting Quality Monitor with 6 Quality Dimensions...")
+        print(f"📊 Dimensions: Completeness, Timeliness, Accuracy, Consistency, Uniqueness, Validity")
         print(f"📊 Window size: {self.window_size} seconds")
         print(f"⏰ Max latency: {config.MAX_LATENCY_SECONDS} seconds")
         print(f"🔔 Quality threshold: {self.alert_manager.quality_threshold}%")
         print(f"📧 Email alerts: {'ENABLED' if self.alert_manager.email_enabled else 'DISABLED'}")
         print(f"📝 Alert log: /app/logs/alerts.log\n")
         
-        self.alert_manager.log_info("Quality Monitor started successfully")
+        self.alert_manager.log_info("Quality Monitor started with 6 dimensions")
         
         try:
             for message in self.consumer:

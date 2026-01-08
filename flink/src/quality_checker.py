@@ -3,7 +3,7 @@ Data quality checker module.
 Implements various quality checks for streaming data.
 """
 from datetime import datetime, timedelta
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Set
 import logging
 
 logger = logging.getLogger(__name__)
@@ -21,6 +21,10 @@ class QualityChecker:
         
         # Initialize alert manager
         self.alert_manager = None  # Will be set by kafka_consumer
+        
+        # Track recent order IDs for uniqueness check (sliding window)
+        self.recent_order_ids: Set[str] = set()
+        self.max_recent_orders = 10000  # Keep last 10k order IDs
         
         # Track stats for alerting
         self.window_stats = {
@@ -81,6 +85,17 @@ class QualityChecker:
         self.alert_manager.check_critical_issues(
             self.window_stats['critical_issues']
         )
+    
+    def _add_to_recent_orders(self, order_id: str):
+        """Add order ID to recent set and maintain size limit"""
+        if order_id:
+            self.recent_order_ids.add(order_id)
+            
+            # Keep set size manageable
+            if len(self.recent_order_ids) > self.max_recent_orders:
+                # Remove oldest (approximate - removes random items)
+                for _ in range(1000):
+                    self.recent_order_ids.pop()
     
     def check_completeness(self, order: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -213,6 +228,135 @@ class QualityChecker:
             'invalid_count': len(issues)
         }
     
+    def check_consistency(self, order: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Check if data formats are consistent.
+        
+        Returns:
+            dict: {
+                'score': float (0-100),
+                'issues': list,
+                'inconsistent_count': int
+            }
+        """
+        issues = []
+        checks = 0
+        passed = 0
+        
+        # Check order_id format (should be ORD-XXXXX)
+        checks += 1
+        if 'order_id' in order and order['order_id'] is not None:
+            if isinstance(order['order_id'], str) and order['order_id'].startswith('ORD-'):
+                passed += 1
+            else:
+                issues.append(f"inconsistent_order_id_format")
+        
+        # Check customer_id format (should be CUST-XXXXX)
+        checks += 1
+        if 'customer_id' in order and order['customer_id'] is not None:
+            if isinstance(order['customer_id'], str) and order['customer_id'].startswith('CUST-'):
+                passed += 1
+            else:
+                issues.append(f"inconsistent_customer_id_format")
+        
+        # Check timestamp format
+        checks += 1
+        if 'timestamp' in order and order['timestamp'] is not None:
+            try:
+                datetime.fromisoformat(order['timestamp'].replace('Z', '+00:00'))
+                passed += 1
+            except:
+                issues.append("inconsistent_timestamp_format")
+        
+        score = (passed / checks) * 100 if checks > 0 else 0
+        
+        return {
+            'dimension': 'consistency',
+            'score': round(score, 2),
+            'issues': issues,
+            'inconsistent_count': len(issues)
+        }
+    
+    def check_uniqueness(self, order: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Check if order is unique (not a duplicate).
+        
+        Returns:
+            dict: {
+                'score': float (0-100),
+                'issues': list,
+                'is_duplicate': bool
+            }
+        """
+        issues = []
+        order_id = order.get('order_id')
+        
+        is_duplicate = order_id in self.recent_order_ids if order_id else False
+        
+        if is_duplicate:
+            issues.append(f"duplicate_order_{order_id}")
+        
+        score = 0.0 if is_duplicate else 100.0
+        
+        return {
+            'dimension': 'uniqueness',
+            'score': score,
+            'issues': issues,
+            'is_duplicate': is_duplicate
+        }
+    
+    def check_validity(self, order: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Check business rule validity.
+        
+        Returns:
+            dict: {
+                'score': float (0-100),
+                'issues': list,
+                'invalid_rules': int
+            }
+        """
+        issues = []
+        checks = 0
+        passed = 0
+        
+        # Rule 1: Total amount should equal quantity * price
+        checks += 1
+        if all(k in order and order[k] is not None for k in ['quantity', 'price', 'total_amount']):
+            expected_total = order['quantity'] * order['price']
+            actual_total = order['total_amount']
+            
+            # Allow small floating point differences
+            if abs(expected_total - actual_total) < 0.01:
+                passed += 1
+            else:
+                issues.append(f"invalid_calculation_expected_{expected_total:.2f}_got_{actual_total:.2f}")
+        
+        # Rule 2: Quantity should be reasonable (1-1000)
+        checks += 1
+        if 'quantity' in order and order['quantity'] is not None:
+            if 1 <= order['quantity'] <= 1000:
+                passed += 1
+            else:
+                issues.append(f"invalid_quantity_range_{order['quantity']}")
+        
+        # Rule 3: Price should be reasonable ($0.01 - $10,000)
+        checks += 1
+        if 'price' in order and order['price'] is not None:
+            if 0.01 <= order['price'] <= 10000:
+                passed += 1
+            else:
+                issues.append(f"invalid_price_range_{order['price']}")
+        
+        score = (passed / checks) * 100 if checks > 0 else 0
+        
+        return {
+            'dimension': 'validity',
+            'score': round(score, 2),
+            'issues': issues,
+            'invalid_rules': len(issues)
+        }
+    
     def check_all(self, order: Dict[str, Any]) -> Dict[str, Any]:
         """
         Run all quality checks and return aggregated results.
@@ -223,6 +367,9 @@ class QualityChecker:
                 'completeness': dict,
                 'timeliness': dict,
                 'accuracy': dict,
+                'consistency': dict,
+                'uniqueness': dict,
+                'validity': dict,
                 'overall_score': float,
                 'has_issues': bool,
                 'issue_count': int
@@ -231,19 +378,31 @@ class QualityChecker:
         completeness = self.check_completeness(order)
         timeliness = self.check_timeliness(order)
         accuracy = self.check_accuracy(order)
+        consistency = self.check_consistency(order)
+        uniqueness = self.check_uniqueness(order)
+        validity = self.check_validity(order)
+        
+        # Add order to recent set for future uniqueness checks
+        self._add_to_recent_orders(order.get('order_id'))
         
         # Calculate overall score (weighted average)
         overall_score = (
-            completeness['score'] * 0.4 +  # 40% weight
-            timeliness['score'] * 0.3 +     # 30% weight
-            accuracy['score'] * 0.3          # 30% weight
+            completeness['score'] * 0.25 +  # 25% weight
+            timeliness['score'] * 0.15 +     # 15% weight
+            accuracy['score'] * 0.20 +       # 20% weight
+            consistency['score'] * 0.15 +    # 15% weight
+            uniqueness['score'] * 0.10 +     # 10% weight
+            validity['score'] * 0.15          # 15% weight
         )
         
         # Aggregate all issues
         all_issues = (
             completeness['issues'] + 
             timeliness['issues'] + 
-            accuracy['issues']
+            accuracy['issues'] +
+            consistency['issues'] +
+            uniqueness['issues'] +
+            validity['issues']
         )
         
         result = {
@@ -252,6 +411,9 @@ class QualityChecker:
             'completeness': completeness,
             'timeliness': timeliness,
             'accuracy': accuracy,
+            'consistency': consistency,
+            'uniqueness': uniqueness,
+            'validity': validity,
             'overall_score': round(overall_score, 2),
             'has_issues': len(all_issues) > 0,
             'issue_count': len(all_issues),
@@ -283,6 +445,12 @@ if __name__ == "__main__":
     print("Clean Order Quality Check:")
     print(f"  Overall Score: {result['overall_score']}")
     print(f"  Has Issues: {result['has_issues']}")
+    print(f"  Completeness: {result['completeness']['score']}")
+    print(f"  Timeliness: {result['timeliness']['score']}")
+    print(f"  Accuracy: {result['accuracy']['score']}")
+    print(f"  Consistency: {result['consistency']['score']}")
+    print(f"  Uniqueness: {result['uniqueness']['score']}")
+    print(f"  Validity: {result['validity']['score']}")
     print()
     
     # Test with problematic order
