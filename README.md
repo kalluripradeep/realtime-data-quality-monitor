@@ -14,6 +14,20 @@ A production-grade real-time data quality monitoring system that processes strea
 - **System Uptime:** 99.9%
 - **Data Dimensions:** 6 quality metrics tracked simultaneously
 
+## 📸 Screenshots
+
+### Enhanced Dashboard - All 6 Quality Dimensions
+![Dashboard with 6 Dimensions](images/dashboard-6-dimensions.png)
+*Real-time monitoring of Completeness, Timeliness, Accuracy, Consistency, Uniqueness, and Validity with color-coded gauges*
+
+### Interactive API Documentation
+![API Swagger UI](images/api-swagger.png)
+*REST API with 7 endpoints - interactive Swagger UI for testing and documentation*
+
+### Real-Time Alert Logs
+![Alert Logs](images/alert-logs.png)
+*Automated alerting system with CRITICAL and WARNING alerts based on configurable thresholds*
+
 ## 🎯 Features
 
 ### Core Capabilities
