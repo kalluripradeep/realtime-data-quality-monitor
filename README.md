@@ -508,7 +508,7 @@ MIT License - see LICENSE file for details
 
 For issues, questions, or contributions:
 - Open an issue on GitHub
-- Email: contact@thejoblane.com
+- Email: kalluripradeep99@gmail.com
 
 ---
 
