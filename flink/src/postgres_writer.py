@@ -30,6 +30,10 @@ class PostgresWriter:
             print(f"❌ Failed to connect to PostgreSQL: {e}")
             raise
     
+    def get_connection(self):
+        """Get database connection for external use (like ML training)."""
+        return self.conn
+    
     def write_metric(self, metric_name: str, metric_value: float, 
                      dimension: str, details: Dict[str, Any] = None):
         """

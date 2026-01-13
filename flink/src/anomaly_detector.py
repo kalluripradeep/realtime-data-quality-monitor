@@ -1,0 +1,278 @@
+"""
+ML-based Anomaly Detection for Quality Metrics
+Uses Isolation Forest to detect unusual quality patterns
+"""
+import numpy as np
+import pandas as pd
+from sklearn.ensemble import IsolationForest
+from sklearn.preprocessing import StandardScaler
+import psycopg2
+from datetime import datetime, timedelta
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+class AnomalyDetector:
+    """
+    ML-based anomaly detector using Isolation Forest algorithm.
+    Detects unusual patterns in quality metrics.
+    """
+    
+    def __init__(self, contamination=0.1):
+        """
+        Initialize anomaly detector.
+        
+        Args:
+            contamination: Expected proportion of anomalies (0.1 = 10%)
+        """
+        self.contamination = contamination
+        self.model = IsolationForest(
+            contamination=contamination,
+            random_state=42,
+            n_estimators=100
+        )
+        self.scaler = StandardScaler()
+        self.is_trained = False
+        self.feature_columns = [
+            'completeness_score',
+            'timeliness_score', 
+            'accuracy_score',
+            'consistency_score',
+            'uniqueness_score',
+            'validity_score',
+            'issue_rate'
+        ]
+        
+        logger.info(f"AnomalyDetector initialized with contamination={contamination}")
+    
+    def get_training_data(self, conn, hours=24):
+        """
+        Get historical data for training.
+        
+        Args:
+            conn: Database connection
+            hours: Hours of historical data to use
+            
+        Returns:
+            DataFrame with training data
+        """
+        try:
+            query = """
+                SELECT 
+                    window_end,
+                    completeness_score,
+                    timeliness_score,
+                    accuracy_score,
+                    overall_score,
+                    total_records,
+                    issues_found,
+                    CAST(issues_found AS FLOAT) / NULLIF(total_records, 0) * 100 as issue_rate
+                FROM quality_stats
+                WHERE window_end > NOW() - INTERVAL '%s hours'
+                ORDER BY window_end ASC
+            """
+            
+            df = pd.read_sql_query(query, conn, params=(hours,))
+            
+            # Get consistency, uniqueness, validity from quality_metrics
+            metrics_query = """
+                SELECT 
+                    DATE_TRUNC('minute', timestamp) as window_time,
+                    AVG(CASE WHEN metric_name = 'consistency_score' THEN metric_value END) as consistency_score,
+                    AVG(CASE WHEN metric_name = 'uniqueness_score' THEN metric_value END) as uniqueness_score,
+                    AVG(CASE WHEN metric_name = 'validity_score' THEN metric_value END) as validity_score
+                FROM quality_metrics
+                WHERE timestamp > NOW() - INTERVAL '%s hours'
+                GROUP BY DATE_TRUNC('minute', timestamp)
+                ORDER BY window_time ASC
+            """
+            
+            df_metrics = pd.read_sql_query(metrics_query, conn, params=(hours,))
+            
+            # Merge the dataframes
+            if not df_metrics.empty:
+                df['window_time'] = pd.to_datetime(df['window_end']).dt.floor('min')
+                df_metrics['window_time'] = pd.to_datetime(df_metrics['window_time'])
+                df = df.merge(df_metrics, on='window_time', how='left')
+            
+            # Fill missing values with mean
+            for col in ['consistency_score', 'uniqueness_score', 'validity_score']:
+                if col in df.columns:
+                    df[col] = df[col].fillna(df[col].mean())
+                else:
+                    df[col] = 100.0  # Default high score if no data
+            
+            logger.info(f"Retrieved {len(df)} records for training")
+            return df
+            
+        except Exception as e:
+            logger.error(f"Error getting training data: {e}")
+            return pd.DataFrame()
+    
+    def train(self, conn, hours=24, min_samples=50):
+        """
+        Train the anomaly detection model.
+        
+        Args:
+            conn: Database connection
+            hours: Hours of historical data
+            min_samples: Minimum samples needed for training
+            
+        Returns:
+            True if training successful, False otherwise
+        """
+        try:
+            df = self.get_training_data(conn, hours)
+            
+            if len(df) < min_samples:
+                logger.warning(f"Not enough data for training: {len(df)} < {min_samples}")
+                return False
+            
+            # Select features for training
+            X = df[self.feature_columns].values
+            
+            # Remove any rows with NaN
+            mask = ~np.isnan(X).any(axis=1)
+            X = X[mask]
+            
+            if len(X) < min_samples:
+                logger.warning(f"Not enough valid data after cleaning: {len(X)} < {min_samples}")
+                return False
+            
+            # Scale features
+            X_scaled = self.scaler.fit_transform(X)
+            
+            # Train model
+            self.model.fit(X_scaled)
+            self.is_trained = True
+            
+            logger.info(f"Model trained successfully on {len(X)} samples")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error training model: {e}")
+            return False
+    
+    def predict(self, data):
+        """
+        Predict if data point is anomaly.
+        
+        Args:
+            data: Dictionary with quality metrics
+            
+        Returns:
+            Tuple of (is_anomaly, anomaly_score)
+            is_anomaly: True if anomaly detected
+            anomaly_score: Anomaly score (-1 to 1, lower = more anomalous)
+        """
+        if not self.is_trained:
+            logger.warning("Model not trained yet")
+            return False, 0.0
+        
+        try:
+            # Extract features
+            features = [data.get(col, 100.0) for col in self.feature_columns]
+            X = np.array(features).reshape(1, -1)
+            
+            # Scale features
+            X_scaled = self.scaler.transform(X)
+            
+            # Predict
+            prediction = self.model.predict(X_scaled)[0]  # -1 = anomaly, 1 = normal
+            score = self.model.score_samples(X_scaled)[0]  # Lower = more anomalous
+            
+            is_anomaly = (prediction == -1)
+            
+            if is_anomaly:
+                logger.warning(f"Anomaly detected! Score: {score:.3f}")
+            
+            return is_anomaly, float(score)
+            
+        except Exception as e:
+            logger.error(f"Error predicting anomaly: {e}")
+            return False, 0.0
+    
+    def save_anomaly(self, conn, data, anomaly_score):
+        """
+        Save detected anomaly to database.
+        
+        Args:
+            conn: Database connection
+            data: Quality metrics data
+            anomaly_score: Anomaly score from model
+        """
+        try:
+            cursor = conn.cursor()
+            
+            # Create anomalies table if not exists
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS quality_anomalies (
+                    id SERIAL PRIMARY KEY,
+                    detected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    anomaly_score FLOAT,
+                    completeness_score FLOAT,
+                    timeliness_score FLOAT,
+                    accuracy_score FLOAT,
+                    consistency_score FLOAT,
+                    uniqueness_score FLOAT,
+                    validity_score FLOAT,
+                    issue_rate FLOAT,
+                    description TEXT
+                )
+            """)
+            
+            # Insert anomaly
+            description = f"Anomaly detected with score {anomaly_score:.3f}"
+            
+            cursor.execute("""
+                INSERT INTO quality_anomalies (
+                    anomaly_score, completeness_score, timeliness_score,
+                    accuracy_score, consistency_score, uniqueness_score,
+                    validity_score, issue_rate, description
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                anomaly_score,
+                data.get('completeness_score', 0),
+                data.get('timeliness_score', 0),
+                data.get('accuracy_score', 0),
+                data.get('consistency_score', 0),
+                data.get('uniqueness_score', 0),
+                data.get('validity_score', 0),
+                data.get('issue_rate', 0),
+                description
+            ))
+            
+            conn.commit()
+            cursor.close()
+            
+            logger.info(f"Anomaly saved to database with score {anomaly_score:.3f}")
+            
+        except Exception as e:
+            logger.error(f"Error saving anomaly: {e}")
+            conn.rollback()
+
+
+def retrain_model(detector, conn, hours=24):
+    """
+    Periodically retrain the model with fresh data.
+    
+    Args:
+        detector: AnomalyDetector instance
+        conn: Database connection
+        hours: Hours of data to use
+    """
+    try:
+        logger.info("Starting model retraining...")
+        success = detector.train(conn, hours=hours)
+        
+        if success:
+            logger.info("Model retrained successfully")
+        else:
+            logger.warning("Model retraining failed")
+            
+        return success
+        
+    except Exception as e:
+        logger.error(f"Error retraining model: {e}")
+        return False

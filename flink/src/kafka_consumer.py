@@ -1,5 +1,5 @@
 """
-Kafka consumer with real-time quality checking and alerting.
+Kafka consumer with real-time quality checking, alerting, and ML anomaly detection.
 Simplified version without Flink for easier deployment.
 """
 import json
@@ -17,10 +17,15 @@ import config
 from src.quality_checker import QualityChecker
 from src.postgres_writer import PostgresWriter
 from src.alerting import AlertManager
+from src.anomaly_detector import AnomalyDetector, retrain_model
+import threading
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class QualityMonitor:
-    """Real-time quality monitoring for streaming orders with alerting."""
+    """Real-time quality monitoring for streaming orders with alerting and ML anomaly detection."""
     
     def __init__(self):
         self.checker = QualityChecker(max_latency_seconds=config.MAX_LATENCY_SECONDS)
@@ -36,6 +41,11 @@ class QualityMonitor:
             email_from=None,  # Sender email
             smtp_password=None  # Email password or app password
         )
+        
+        # Initialize ML anomaly detector
+        self.anomaly_detector = AnomalyDetector(contamination=0.1)
+        self.anomaly_trained = False
+        self.last_retrain = datetime.utcnow()
         
         # Set alert manager in quality checker
         self.checker.set_alert_manager(self.alert_manager)
@@ -73,6 +83,23 @@ class QualityMonitor:
                 )
                 print(f"✅ Connected to Kafka successfully!")
                 self.alert_manager.log_system_health(True, "Kafka connection established")
+                
+                # Train anomaly detector on startup
+                if not self.anomaly_trained:
+                    print("🤖 Training ML anomaly detector on historical data...")
+                    try:
+                        conn = self.writer.get_connection()
+                        if self.anomaly_detector.train(conn, hours=24, min_samples=30):
+                            self.anomaly_trained = True
+                            print("✅ ML anomaly detector trained successfully")
+                            self.alert_manager.log_info("ML anomaly detector trained on 24 hours of data")
+                        else:
+                            print("⚠️ Not enough data to train anomaly detector yet (need 30+ samples)")
+                            self.alert_manager.log_info("Waiting for more data to train ML model")
+                    except Exception as e:
+                        print(f"⚠️ Could not train anomaly detector: {e}")
+                        logger.warning(f"Anomaly detector training failed: {e}")
+                
                 return consumer
             except Exception as e:
                 if attempt < max_retries - 1:
@@ -91,7 +118,7 @@ class QualityMonitor:
         return elapsed >= self.window_size
     
     def _flush_window(self):
-        """Calculate and write window statistics with alerting."""
+        """Calculate and write window statistics with alerting and anomaly detection."""
         if self.window_data['total'] == 0:
             return
         
@@ -105,6 +132,46 @@ class QualityMonitor:
         avg_uniqueness = sum(self.window_data['uniqueness_scores']) / len(self.window_data['uniqueness_scores']) if self.window_data['uniqueness_scores'] else 0
         avg_validity = sum(self.window_data['validity_scores']) / len(self.window_data['validity_scores']) if self.window_data['validity_scores'] else 0
         avg_overall = sum(self.window_data['overall_scores']) / len(self.window_data['overall_scores']) if self.window_data['overall_scores'] else 0
+        
+        # Check for ML anomalies
+        if self.anomaly_trained:
+            try:
+                anomaly_data = {
+                    'completeness_score': avg_completeness,
+                    'timeliness_score': avg_timeliness,
+                    'accuracy_score': avg_accuracy,
+                    'consistency_score': avg_consistency,
+                    'uniqueness_score': avg_uniqueness,
+                    'validity_score': avg_validity,
+                    'issue_rate': (self.window_data['issues'] / self.window_data['total'] * 100) if self.window_data['total'] > 0 else 0
+                }
+                
+                is_anomaly, anomaly_score = self.anomaly_detector.predict(anomaly_data)
+                
+                if is_anomaly:
+                    print(f"🤖 ML ANOMALY DETECTED! Score: {anomaly_score:.3f}")
+                    conn = self.writer.get_connection()
+                    self.anomaly_detector.save_anomaly(conn, anomaly_data, anomaly_score)
+                    
+                    self.alert_manager.log_alert(
+                        "WARNING",
+                        f"ML anomaly detected with score {anomaly_score:.3f}",
+                        {"anomaly_score": anomaly_score, **anomaly_data}
+                    )
+            except Exception as e:
+                logger.error(f"Error in anomaly detection: {e}")
+        
+        # Check if we should retrain (every 2 hours)
+        if (datetime.utcnow() - self.last_retrain).total_seconds() > 7200:
+            print("🤖 Retraining ML anomaly detector with fresh data...")
+            try:
+                conn = self.writer.get_connection()
+                if retrain_model(self.anomaly_detector, conn, hours=24):
+                    self.last_retrain = datetime.utcnow()
+                    print("✅ ML model retrained successfully")
+                    self.alert_manager.log_info("ML anomaly detector retrained")
+            except Exception as e:
+                logger.error(f"Error retraining model: {e}")
         
         # Check for alerts based on window quality checker stats
         self.checker.check_window_alerts()
@@ -251,16 +318,17 @@ class QualityMonitor:
             return 'low'
     
     def run(self):
-        """Main processing loop with alerting."""
-        print(f"🚀 Starting Quality Monitor with 6 Quality Dimensions...")
+        """Main processing loop with alerting and ML anomaly detection."""
+        print(f"🚀 Starting Quality Monitor with 6 Quality Dimensions + ML Anomaly Detection...")
         print(f"📊 Dimensions: Completeness, Timeliness, Accuracy, Consistency, Uniqueness, Validity")
+        print(f"🤖 ML: Isolation Forest anomaly detection {'ENABLED' if self.anomaly_trained else 'TRAINING...'}")
         print(f"📊 Window size: {self.window_size} seconds")
         print(f"⏰ Max latency: {config.MAX_LATENCY_SECONDS} seconds")
         print(f"🔔 Quality threshold: {self.alert_manager.quality_threshold}%")
         print(f"📧 Email alerts: {'ENABLED' if self.alert_manager.email_enabled else 'DISABLED'}")
         print(f"📝 Alert log: /app/logs/alerts.log\n")
         
-        self.alert_manager.log_info("Quality Monitor started with 6 dimensions")
+        self.alert_manager.log_info("Quality Monitor started with 6 dimensions + ML anomaly detection")
         
         try:
             for message in self.consumer:
