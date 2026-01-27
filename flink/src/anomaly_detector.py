@@ -10,8 +10,14 @@ import psycopg2
 from datetime import datetime, timedelta
 import logging
 import json
+import time
+from collections import deque
 from src.explainability import AnomalyExplainer
 from src.drift_detector import DriftDetector
+from src.lstm_detector import LSTMAnomalyDetector
+from src.autoencoder_detector import AutoencoderDetector
+from src.ensemble_detector import EnsembleDetector
+from src.performance_monitor import PerformanceMonitor
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +59,17 @@ class AnomalyDetector:
         # Drift detection
         self.drift_detector = DriftDetector(reference_window_hours=24)
         self.last_drift_check = None
+        
+        # Advanced ML models
+        self.lstm_detector = LSTMAnomalyDetector(sequence_length=60)
+        self.autoencoder = AutoencoderDetector(encoding_dim=4)
+        self.ensemble = None
+        
+        # Performance monitoring
+        self.performance_monitor = PerformanceMonitor(window_size=100)
+        
+        # Sequence buffer for LSTM
+        self.sequence_buffer = deque(maxlen=60)
         
         logger.info(f"AnomalyDetector initialized with contamination={contamination}")
     
@@ -177,6 +194,33 @@ class AnomalyDetector:
             except Exception as e:
                 logger.warning(f"Failed to initialize drift detector: {e}")
             
+            # Train LSTM
+            try:
+                logger.info("Training LSTM detector...")
+                if self.lstm_detector.train(conn, hours=hours, min_samples=200):
+                    logger.info("✅ LSTM detector trained successfully")
+                else:
+                    logger.warning("⚠️ LSTM training skipped - insufficient data")
+            except Exception as e:
+                logger.warning(f"LSTM training failed: {e}")
+            
+            # Train Autoencoder
+            try:
+                logger.info("Training Autoencoder...")
+                if self.autoencoder.train(conn, hours=hours, min_samples=100):
+                    logger.info("✅ Autoencoder trained successfully")
+                else:
+                    logger.warning("⚠️ Autoencoder training skipped - insufficient data")
+            except Exception as e:
+                logger.warning(f"Autoencoder training failed: {e}")
+            
+            # Initialize ensemble if all models trained
+            if self.is_trained and self.lstm_detector.is_trained and self.autoencoder.is_trained:
+                self.ensemble = EnsembleDetector(self, self.lstm_detector, self.autoencoder)
+                logger.info("✅ Ensemble detector initialized with all 3 models")
+            else:
+                logger.info("ℹ️  Ensemble detector not initialized - some models not trained")
+            
             return True
             
         except Exception as e:
@@ -245,6 +289,56 @@ class AnomalyDetector:
                 explanation = {'error': str(e)}
         
         return is_anomaly, anomaly_score, explanation
+    
+    def predict_ensemble(self, data):
+        """
+        Predict using ensemble of all models with performance tracking.
+        
+        Args:
+            data: Dictionary with feature values
+            
+        Returns:
+            Tuple of (is_anomaly, ensemble_score, details)
+        """
+        # Add to sequence buffer
+        self.sequence_buffer.append(data)
+        
+        # Use ensemble if available
+        if self.ensemble:
+            start_time = time.time()
+            
+            # Get ensemble prediction
+            is_anomaly, ensemble_score, details = self.ensemble.predict(
+                data, 
+                list(self.sequence_buffer) if len(self.sequence_buffer) >= 60 else None
+            )
+            
+            # Record performance
+            latency_ms = (time.time() - start_time) * 1000
+            self.performance_monitor.record_prediction('ensemble', latency_ms, is_anomaly)
+            
+            return is_anomaly, ensemble_score, details
+        
+        # Fallback to single model with performance tracking
+        else:
+            start_time = time.time()
+            is_anomaly, score = self.predict(data)
+            latency_ms = (time.time() - start_time) * 1000
+            self.performance_monitor.record_prediction('isolation_forest', latency_ms, is_anomaly)
+            
+            return is_anomaly, score, {'model': 'isolation_forest_only'}
+    
+    def get_performance_metrics(self):
+        """Get performance metrics from monitor."""
+        return self.performance_monitor.get_metrics()
+    
+    def log_performance_summary(self):
+        """Log performance summary."""
+        self.performance_monitor.log_summary()
+    
+    def save_performance_metrics(self, conn):
+        """Save performance metrics to database."""
+        self.performance_monitor.save_metrics(conn)
     
     def check_drift(self, conn, hours=1):
         """
