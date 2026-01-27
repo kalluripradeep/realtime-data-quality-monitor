@@ -9,6 +9,9 @@ from sklearn.preprocessing import StandardScaler
 import psycopg2
 from datetime import datetime, timedelta
 import logging
+import json
+from src.explainability import AnomalyExplainer
+from src.drift_detector import DriftDetector
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +46,13 @@ class AnomalyDetector:
             'validity_score',
             'issue_rate'
         ]
+        
+        # Explainability
+        self.explainer = None
+        
+        # Drift detection
+        self.drift_detector = DriftDetector(reference_window_hours=24)
+        self.last_drift_check = None
         
         logger.info(f"AnomalyDetector initialized with contamination={contamination}")
     
@@ -148,6 +158,25 @@ class AnomalyDetector:
             self.is_trained = True
             
             logger.info(f"Model trained successfully on {len(X)} samples")
+            
+            # Initialize explainer after training
+            try:
+                self.explainer = AnomalyExplainer(self.model, self.feature_columns)
+                # Use subset of training data as background
+                background_size = min(100, len(df))
+                background_data = df[self.feature_columns].sample(n=background_size)
+                self.explainer.create_explainer(background_data)
+                logger.info("✅ Explainability module initialized")
+            except Exception as e:
+                logger.warning(f"Failed to initialize explainer: {e}")
+            
+            # Set reference data for drift detection
+            try:
+                self.drift_detector.set_reference_data(conn, self.feature_columns)
+                logger.info("✅ Drift detector initialized")
+            except Exception as e:
+                logger.warning(f"Failed to initialize drift detector: {e}")
+            
             return True
             
         except Exception as e:
@@ -192,6 +221,71 @@ class AnomalyDetector:
         except Exception as e:
             logger.error(f"Error predicting anomaly: {e}")
             return False, 0.0
+    
+    def predict_with_explanation(self, data):
+        """
+        Predict anomaly with explanation.
+        
+        Args:
+            data: Dictionary with feature values
+            
+        Returns:
+            Tuple of (is_anomaly, anomaly_score, explanation)
+        """
+        # Standard prediction
+        is_anomaly, anomaly_score = self.predict(data)
+        
+        # Get explanation if anomaly detected
+        explanation = None
+        if is_anomaly and self.explainer:
+            try:
+                explanation = self.explainer.explain_anomaly(data)
+            except Exception as e:
+                logger.error(f"Explanation failed: {e}")
+                explanation = {'error': str(e)}
+        
+        return is_anomaly, anomaly_score, explanation
+    
+    def check_drift(self, conn, hours=1):
+        """
+        Check for concept drift in recent data.
+        
+        Args:
+            conn: Database connection
+            hours: Hours of recent data to check
+            
+        Returns:
+            Drift detection results
+        """
+        try:
+            # Get recent data for each feature
+            current_data = {}
+            cutoff = datetime.now() - timedelta(hours=hours)
+            
+            for feature in self.feature_columns:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT metric_value 
+                    FROM quality_metrics 
+                    WHERE metric_name = %s 
+                      AND timestamp > %s
+                """, (feature, cutoff))
+                
+                values = [row[0] for row in cursor.fetchall()]
+                if len(values) >= 30:
+                    current_data[feature] = values
+                
+                cursor.close()
+            
+            # Detect drift
+            drift_results = self.drift_detector.detect_drift(current_data)
+            self.last_drift_check = datetime.now()
+            
+            return drift_results
+            
+        except Exception as e:
+            logger.error(f"Drift check failed: {e}")
+            return {'error': str(e)}
     
     def save_anomaly(self, conn, data, anomaly_score):
         """
