@@ -113,7 +113,7 @@ class AutoencoderDetector:
             df_pivot = df_pivot[self.feature_columns]
             
             # Fill missing values
-            df_pivot = df_pivot.fillna(method='ffill').fillna(100.0)
+            df_pivot = df_pivot.ffill().fillna(100.0)
 
             # Limit to last 500 samples for faster training
             if len(df_pivot) > 500:
