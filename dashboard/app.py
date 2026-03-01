@@ -9,6 +9,7 @@ import plotly.express as px
 import pandas as pd
 from datetime import datetime, timedelta
 import requests
+import os
 
 # Page config
 st.set_page_config(
@@ -71,11 +72,12 @@ with st.sidebar:
 def get_db_connection():
     try:
         conn = psycopg2.connect(
-            host="postgres",
-            port="5432",
-            database="data_quality",
-            user="admin",
-            password="admin123"
+            host=os.environ.get("DB_HOST", "postgres"),
+            port=os.environ.get("DB_PORT", "5432"),
+            database=os.environ.get("DB_NAME", "postgres"),
+            user=os.environ.get("DB_USER", "postgres"),
+            password=os.environ.get("DB_PASSWORD", ""),
+            sslmode="require"
         )
         return conn
     except Exception as e:
