@@ -71,13 +71,23 @@ with st.sidebar:
 # Database connection
 def get_db_connection():
     try:
+        # Try Streamlit secrets first, then env vars
+        try:
+            host = st.secrets["DB_HOST"]
+            port = st.secrets["DB_PORT"]
+            database = st.secrets["DB_NAME"]
+            user = st.secrets["DB_USER"]
+            password = st.secrets["DB_PASSWORD"]
+        except:
+            host = os.environ.get("DB_HOST", "postgres")
+            port = os.environ.get("DB_PORT", "5432")
+            database = os.environ.get("DB_NAME", "postgres")
+            user = os.environ.get("DB_USER", "postgres")
+            password = os.environ.get("DB_PASSWORD", "")
+        
         conn = psycopg2.connect(
-            host=os.environ.get("DB_HOST", "postgres"),
-            port=os.environ.get("DB_PORT", "5432"),
-            database=os.environ.get("DB_NAME", "postgres"),
-            user=os.environ.get("DB_USER", "postgres"),
-            password=os.environ.get("DB_PASSWORD", ""),
-            sslmode="require"
+            host=host, port=port, database=database,
+            user=user, password=password, sslmode="require"
         )
         return conn
     except Exception as e:
